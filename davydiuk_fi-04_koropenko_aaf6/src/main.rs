@@ -1,6 +1,12 @@
 use crate::ParseError::{InvalidUsage, NoCommand, NotExist, UnacceptableData};
 use std::collections::{HashMap, HashSet};
+use std::fmt::Alignment::Center;
 use std::io;
+use std::process::id;
+
+#[macro_use]
+extern crate prettytable;
+use prettytable::{Cell, Row, Table as PTable};
 
 #[derive(Debug)]
 enum ParseError {
@@ -56,20 +62,20 @@ impl DamnDB {
         if let Some(table) = self.tables.get_mut(table_name) {
             Ok(table)
         } else {
-            Err("insertion into non-existing table impossible")
+            Err("getting into non-existing table impossible")
         }
     }
 
-    pub fn get_table(&mut self, table_name: &str) -> Result<&Table, &str> {
+    pub fn get_table(&self, table_name: &str) -> Result<&Table, &str> {
         if let Some(table) = self.tables.get(table_name) {
             Ok(table)
         } else {
-            Err("insertion into non-existing table impossible")
+            Err("getting into non-existing table impossible")
         }
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct Table {
     name: String,
     columns: Vec<String>,
@@ -84,10 +90,59 @@ impl Table {
             data,
         }
     }
+    pub fn print(&self) {
+        let mut table = PTable::new();
+        table.add_row(Row::new(
+            self.columns
+                .iter()
+                .map(|x| Cell::new(x))
+                .collect::<Vec<Cell>>(),
+        ));
+        if self.data.first().is_some() {
+            for row_u in 0..self.data.first().unwrap().len() {
+                let mut vvec = Vec::new();
+                for column in 0..self.columns.len() {
+                    vvec.push(Cell::new(
+                        self.data.get(column).unwrap().get(row_u).unwrap().as_str(),
+                    ))
+                }
+                table.add_row(Row::new(vvec));
+            }
+        }
+        table.printstd();
+    }
+
+    pub fn add_to_table(&mut self, data: Vec<String>) {
+        let mut it = data.into_iter();
+        if self.data.is_empty() {
+            (0..it.len()).for_each(|_| self.data.push(Vec::new()));
+        }
+        for x in self.data.iter_mut() {
+            x.push(it.next().unwrap());
+        }
+    }
 }
 
 fn main() {
     let mut db = DamnDB::new();
+    let vec = vec![
+        "create table (first, second);",
+        "select from table;",
+        "insert table (\"peklo\", \"chortove\");",
+        "select from table;",
+        "create table2 (third, fouth);",
+        "insert into table2 (\"peklo\", \"uuuuh_blin\");",
+        "insert into table2 (\"ne_peklo\", \"uuuuh_blina\");",
+        "insert table (\"neee_peklo\", \"chortove\");",
+        "select from table;",
+        "select from table2;",
+        "select from table where first = \"neee_peklo\";",
+        "select from table full_join table2 on first = third;",
+    ];
+    vec.into_iter()
+        .map(|x| parse_and_execute_command(x, db.get_mut()))
+        .take_while(|x| x.is_ok())
+        .collect::<Vec<_>>();
     loop {
         let mut cmd_str: String = String::new();
         println!("Enter command");
@@ -112,12 +167,12 @@ fn check_table_name(possible_name: &str) -> bool {
     }
 }
 
-// просторова та часова складність
 fn parse_and_execute_command(cmd_str: &str, db: &mut DamnDB) -> Result<(), ParseError> {
     let s = cmd_str.trim();
     if s.is_empty() {
         return Err(NoCommand);
     }
+    println!("executing order \"{}\"", s);
     // create table_name (first_row, another_row);
     if let Some(create_data) = s.to_lowercase().strip_prefix("create ") {
         let table_name = s[7..]
@@ -126,7 +181,7 @@ fn parse_and_execute_command(cmd_str: &str, db: &mut DamnDB) -> Result<(), Parse
             .take_while(|char| char != &'(')
             .collect::<String>();
         let table_right_str = table_name.trim();
-        if !check_table_name(&s[12..]) {
+        if !check_table_name(table_right_str) {
             println!("provided table name is unacceptable");
             return Err(UnacceptableData);
         }
@@ -150,10 +205,12 @@ fn parse_and_execute_command(cmd_str: &str, db: &mut DamnDB) -> Result<(), Parse
                 table_columns.push(String::from(column_possibly_name));
             };
         }
+        let mut colum = Vec::new();
+        (0..table_columns.len()).for_each(|_| colum.push(Vec::new()));
         match db.try_create_table(Table::new(
             String::from(table_right_str),
             table_columns,
-            Vec::new(),
+            colum,
         )) {
             Ok(_) => {
                 println!("table with name {table_right_str} has been created")
@@ -174,17 +231,16 @@ fn parse_and_execute_command(cmd_str: &str, db: &mut DamnDB) -> Result<(), Parse
             .into_iter()
             .take_while(|char| char != &'(')
             .collect::<String>();
-        if !check_table_name(&s[12..]) {
+        let table_right_str = table_name.trim();
+        if !check_table_name(table_right_str) {
             println!("provided table name is unacceptable");
             return Err(UnacceptableData);
         }
-        let table_right_str = table_name.trim();
         let columns_data = &data[(table_right_str.len() + 2)..];
         let columns = columns_data.split(", ").collect::<Vec<&str>>();
         let mut finished = false;
         let mut table_columns_data = Vec::new();
         for column_possibly_data in columns {
-            println!("{column_possibly_data}");
             if finished
                 || !column_possibly_data.starts_with('"')
                 || (!column_possibly_data.ends_with('"') && !column_possibly_data.ends_with(';'))
@@ -221,26 +277,25 @@ fn parse_and_execute_command(cmd_str: &str, db: &mut DamnDB) -> Result<(), Parse
     } else if let Some(select_data) = s.to_lowercase().strip_prefix("select from ") {
         let mut data;
         if !select_data.contains(' ') && select_data.len() > 1 {
-            match db.get_table(&s[12..]) {
+            return match db.get_table(&s[12..s.len() - 1].trim()) {
                 Ok(table) => {
-                    data = table;
-                    // todo print this
-                    return Ok(());
+                    table.print();
+                    Ok(())
                 }
                 Err(error_message) => {
                     println!("{}", error_message);
-                    return Err(InvalidUsage);
+                    Err(InvalidUsage)
                 }
-            }
+            };
         }
-        let table_name = s[12..]
+        let table_name = s[12..s.len() - 1]
+            .trim()
             .chars()
             .into_iter()
             .take_while(|char| char != &' ')
             .collect::<String>();
         let table_right_str = table_name.trim();
-        let dbb = db.get_mut();
-        match dbb.get_table(table_right_str) {
+        match db.get_table(table_right_str) {
             Ok(table) => {
                 data = table;
             }
@@ -257,10 +312,8 @@ fn parse_and_execute_command(cmd_str: &str, db: &mut DamnDB) -> Result<(), Parse
                 .into_iter()
                 .take_while(|char| char != &' ')
                 .collect::<String>();
-            let join_table = match db.get_mut().get_table(table_join.as_str()) {
-                Ok(table) => {
-                    table
-                }
+            let join_table = match db.get_table(table_join.as_str()) {
+                Ok(table) => table,
                 Err(error_message) => {
                     println!("{}", error_message);
                     return Err(InvalidUsage);
@@ -290,8 +343,97 @@ fn parse_and_execute_command(cmd_str: &str, db: &mut DamnDB) -> Result<(), Parse
             } else {
                 return Err(InvalidUsage);
             }
-            // table2 = Some((join_table, on, another_on));
-            //todo  we have all for full join! merge to table (TO RES)
+            if !data.columns.iter().any(|column_name| column_name.eq(&on))
+                && !join_table
+                    .columns
+                    .iter()
+                    .any(|column_name| column_name.eq(&another_on))
+            {
+                println!("tables don't have such columns");
+                return Err(UnacceptableData);
+            }
+            let mut whirlpool = Table::new("whirlpool".to_string(), vec![], vec![]);
+            data.columns
+                .iter()
+                .for_each(|x| whirlpool.columns.push(x.clone()));
+            let interested_2 = join_table
+                .columns
+                .iter()
+                .position(|x| x.eq(&another_on))
+                .unwrap();
+            join_table
+                .columns
+                .iter()
+                .cloned()
+                .filter(|x| x.ne(&another_on))
+                .for_each(|x| whirlpool.columns.push(x));
+            let interested = data.columns.iter().position(|x| x.eq(&on)).unwrap();
+            let mut set_of_joined_from2 = HashSet::new();
+
+            for row_u in 0..data.data.first().unwrap().len() {
+                // йдемо по першій таблиці
+                let mut row = Vec::new(); // збираємо всі дані рядка в вектор
+                for column in 0..data.data.len() {
+                    row.push(data.data.get(column).unwrap().get(row_u).unwrap());
+                }
+                let join_on = row.get(interested).unwrap();
+                let mut this_row_from_first_have_pairs = false;
+                let len_2 = join_table.data.first().unwrap().len();
+                for row_join_i in 0..len_2 {
+                    //йдемо по другій таблиці
+                    let mut row_join = Vec::new(); // збираємо всі дані рядка в вектор
+                    let mut row_s = row.clone();
+                    for column_join in 0..join_table.data.len() {
+                        row_join.push(
+                            join_table
+                                .data
+                                .get(column_join)
+                                .unwrap()
+                                .get(row_join_i)
+                                .unwrap(),
+                        );
+                    }
+                    if row_join.get(interested_2).unwrap().eq(join_on) {
+                        let mut cl = row_join.clone();
+                        cl.remove(interested_2);
+                        cl.into_iter().for_each(|x| row_s.push(x));
+                        set_of_joined_from2.insert(row_join_i);
+                        this_row_from_first_have_pairs = true;
+                        whirlpool.add_to_table(
+                            row_s.iter().map(|&x| x.clone()).collect::<Vec<String>>(),
+                        );
+                    }
+                }
+                if !this_row_from_first_have_pairs {
+                    let mut mm = row.iter().map(|&x| x.clone()).collect::<Vec<String>>();
+                    (0..len_2 - 1)
+                        .into_iter()
+                        .for_each(|_| mm.push(String::from("")));
+                    whirlpool.add_to_table(mm);
+                }
+            }
+            for row_u in 0..join_table.data.first().unwrap().len() {
+                // second table
+                if set_of_joined_from2.contains(&row_u) {
+                    continue;
+                }
+                let mut row = Vec::new(); // збираємо всі дані рядка в вектор
+                for column in 0..join_table.data.len() {
+                    row.push(join_table.data.get(column).unwrap().get(row_u).unwrap());
+                }
+                let mut rrrow = Vec::new();
+                (0..interested)
+                    .into_iter()
+                    .for_each(|_| rrrow.push(String::from("")));
+                rrrow.push((*row.get(interested_2).unwrap()).clone());
+                (0..data.columns.len() - interested - 1)
+                    .into_iter()
+                    .for_each(|_| rrrow.push(String::from("")));
+                row.remove(interested_2);
+                row.iter().for_each(|&x| rrrow.push(x.clone()));
+                whirlpool.add_to_table(rrrow);
+            }
+            res = whirlpool;
         }
         //SELECT FROM owners
         //           FULL_JOIN cats ON owner_id = cat_owner_id WHERE name *= “Murzik”;
@@ -320,10 +462,10 @@ fn parse_and_execute_command(cmd_str: &str, db: &mut DamnDB) -> Result<(), Parse
             let mut variants = Vec::new();
             let mut columns = what_eq
                 .iter()
-                .filter(| &&x| {
+                .filter(|&&x| {
                     let a = x.starts_with('"') && x.ends_with('"');
                     if a {
-                        variants.push(x)
+                        variants.push(x.trim_matches('"'))
                     }
                     !a
                 })
@@ -354,8 +496,7 @@ fn parse_and_execute_command(cmd_str: &str, db: &mut DamnDB) -> Result<(), Parse
                 }
             }
         }
-
-        //todo print table
+        res.print();
     } else {
         return Err(NotExist);
     }
@@ -387,12 +528,12 @@ pub fn get_eq(
         }
     }
     for i in 0..leeen.unwrap() {
-        let mut elem ;
+        let mut elem;
         elem = None;
         let mut ii = 0;
         for vec in vecs.iter_mut() {
             let n = vec.next();
-            if ii == column_check && !variants.contains(&&***n.as_ref().unwrap()) {
+            if ii == column_check && n.is_some() && !variants.contains(&&***n.as_ref().unwrap()) {
                 rows_ids.insert(i);
             }
             match elem.as_ref() {
@@ -402,7 +543,9 @@ pub fn get_eq(
                     continue;
                 }
                 Some(el) => {
-                    if el.ne(&n.as_ref().unwrap().as_str() ){
+                    if el.ne(&n.as_ref().unwrap().as_str()) {
+                        println!("cause {i}");
+
                         rows_ids.insert(i);
                     }
                     ii += 1;
@@ -418,4 +561,3 @@ pub fn get_eq(
     }
     Ok(())
 }
-

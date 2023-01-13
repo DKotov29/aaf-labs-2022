@@ -1,11 +1,9 @@
 use crate::ParseError::{InvalidUsage, NoCommand, NotExist, UnacceptableData};
 use std::collections::{HashMap, HashSet};
-use std::fmt::Alignment::Center;
 use std::io;
-use std::process::id;
 
-#[macro_use]
-extern crate prettytable;
+// #[macro_use]
+// extern crate prettytable;
 use prettytable::{Cell, Row, Table as PTable};
 
 #[derive(Debug)]
@@ -48,9 +46,37 @@ impl DamnDB {
             if table.columns.len() != data.len() {
                 return Err("insertion into table more or less than table have columns impossible");
             }
+            // let mut indexed_indexes: Option<Vec<usize>> = None;
+            // if table.indexed.is_some() {
+            //     let v = table.indexed.as_ref().unwrap().keys().into_iter()
+            //         .map(|col_indexed_name| table.columns.iter().position(|p| p.eq(col_indexed_name)).unwrap()).collect::<Vec<usize>>();
+            //
+            //     indexed_indexes = Some(v);
+            // }
             let mut it = data.into_iter();
-            for x in table.data.iter_mut() {
-                x.push(it.next().unwrap());
+            let leeen = table.data.first().unwrap().len();
+            let ddata = &mut table.data;
+            for (column_index, x) in ddata.iter_mut().enumerate() {
+                //what is indexed? indexed = Option<HashMap<String,HashMap<String, usize>>>
+                let col_name = table.columns.get(column_index).unwrap().as_str();
+                let val = it.next().unwrap();
+                if table.indexed.is_some() && table.indexed.as_mut().unwrap().contains_key(col_name)
+                {
+                    let b = table.indexed.as_mut().unwrap().get(col_name).unwrap();
+                    let mut v: Vec<usize> = Vec::new();
+                    if b.get(val.as_str()).is_some() {
+                        v = b.get(val.as_str()).unwrap().clone()
+                    }
+                    v.push(leeen);
+                    table
+                        .indexed
+                        .as_mut()
+                        .unwrap()
+                        .get_mut(col_name)
+                        .unwrap()
+                        .insert(val.clone(), v);
+                }
+                x.push(val);
             }
         } else {
             return Err("insertion into non-existing table impossible");
@@ -76,18 +102,26 @@ impl DamnDB {
 }
 
 #[derive(Clone, Debug)]
-struct Table {
+pub struct Table {
     name: String,
     columns: Vec<String>,
     data: Vec<Vec<String>>,
+    indexed: Option<HashMap<String, HashMap<String, Vec<usize>>>>,
+    //                      column           value      index
 }
 
 impl Table {
-    pub fn new(name: String, columns: Vec<String>, data: Vec<Vec<String>>) -> Table {
+    pub fn new(
+        name: String,
+        columns: Vec<String>,
+        data: Vec<Vec<String>>,
+        indexed: Option<HashMap<String, HashMap<String, Vec<usize>>>>,
+    ) -> Table {
         Table {
             name,
             columns,
             data,
+            indexed,
         }
     }
     pub fn print(&self) {
@@ -167,6 +201,40 @@ fn check_table_name(possible_name: &str) -> bool {
     }
 }
 
+//unfortunately, architecture of whole of this code sucks, so this function unused
+pub fn find_when_inserted_indexed(
+    table: &Table,
+    column: usize,
+    eq_to: &str,
+) -> Option<Vec<Vec<String>>> {
+    let mut it = table.data.iter();
+    let col_name = table.columns.get(column);
+    if table.data.is_empty() || table.indexed.is_none() || col_name.is_none() {
+        return None;
+    }
+    let d = table
+        .indexed.clone()
+        .unwrap();
+    let m = d
+        .get(col_name.unwrap())
+        .unwrap();
+    let re = match m.get(eq_to) {
+        None => {
+            return None;
+        }
+        Some(veccc) => veccc,
+    };
+    let mut res = Vec::new();
+    for &i in re {
+        let mut row = Vec::new();
+        for column_i in 0..table.columns.len() {
+            row.push(table.data.get(column_i).unwrap().get(i).unwrap().clone());
+        }
+        res.push(row);
+    }
+    Some(res)
+}
+
 fn parse_and_execute_command(cmd_str: &str, db: &mut DamnDB) -> Result<(), ParseError> {
     let s = cmd_str.trim();
     if s.is_empty() {
@@ -174,7 +242,7 @@ fn parse_and_execute_command(cmd_str: &str, db: &mut DamnDB) -> Result<(), Parse
     }
     println!("executing order \"{}\"", s);
     // create table_name (first_row, another_row);
-    if let Some(create_data) = s.to_lowercase().strip_prefix("create ") {
+    if s.to_lowercase().starts_with("create ") {
         let table_name = s[7..]
             .chars()
             .into_iter()
@@ -188,13 +256,20 @@ fn parse_and_execute_command(cmd_str: &str, db: &mut DamnDB) -> Result<(), Parse
         let columns_data = &s[(table_right_str.len() + 7 + 2)..];
         let columns = columns_data.split(", ").collect::<Vec<&str>>();
         let mut finished = false;
-        let mut table_columns = Vec::new();
+        let mut table_columns = Vec::new(); //Option<HashMap<String,HashMap<String, usize>>>
+        let mut mmmap = None;
         for column_possibly_name in columns {
             if finished {
                 return Err(InvalidUsage);
             }
-            if column_possibly_name.contains("INDEXED") {
-                todo!()
+            if column_possibly_name.to_uppercase().ends_with(" INDEXED") {
+                if mmmap.is_none() {
+                    mmmap = Some(HashMap::new());
+                }
+                mmmap.as_mut().unwrap().insert(
+                    column_possibly_name[..column_possibly_name.len() - 8].to_string(),
+                    HashMap::new(),
+                );
             }
             if column_possibly_name.to_lowercase().ends_with(");") {
                 finished = true;
@@ -211,6 +286,7 @@ fn parse_and_execute_command(cmd_str: &str, db: &mut DamnDB) -> Result<(), Parse
             String::from(table_right_str),
             table_columns,
             colum,
+            mmmap,
         )) {
             Ok(_) => {
                 println!("table with name {table_right_str} has been created")
@@ -352,7 +428,7 @@ fn parse_and_execute_command(cmd_str: &str, db: &mut DamnDB) -> Result<(), Parse
                 println!("tables don't have such columns");
                 return Err(UnacceptableData);
             }
-            let mut whirlpool = Table::new("whirlpool".to_string(), vec![], vec![]);
+            let mut whirlpool = Table::new("whirlpool".to_string(), vec![], vec![], None);
             data.columns
                 .iter()
                 .for_each(|x| whirlpool.columns.push(x.clone()));

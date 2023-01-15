@@ -514,6 +514,9 @@ fn parse_and_execute_command(cmd_str: &str, db: &mut DamnDB) -> Result<(), Parse
         //SELECT FROM owners
         //           FULL_JOIN cats ON owner_id = cat_owner_id WHERE name *= “Murzik”;
         // *where some *= ("1" | id);
+        if remainder.starts_with(" ") {
+            remainder = &remainder[1..];
+        }
         if remainder.to_lowercase().starts_with("where ") {
             let what_where = remainder[6..]
                 .chars()

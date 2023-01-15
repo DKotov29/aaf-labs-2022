@@ -620,8 +620,6 @@ pub fn get_eq(
                 }
                 Some(el) => {
                     if el.ne(&n.as_ref().unwrap().as_str()) {
-                        println!("cause {i}");
-
                         rows_ids.insert(i);
                     }
                     ii += 1;
@@ -629,9 +627,11 @@ pub fn get_eq(
             }
         }
     }
-    let lollll = rows_ids.into_iter().collect::<Vec<usize>>();
+    let mut lollll = rows_ids.into_iter().collect::<Vec<usize>>();
+    lollll.sort();
+    lollll.reverse();
     for vector in vec {
-        for i in lollll.iter().rev() {
+        for i in lollll.iter() {
             vector.remove(*i);
         }
     }
